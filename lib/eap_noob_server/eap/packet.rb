@@ -11,7 +11,6 @@ module EAPNOOBServer
     # @!attribute type_data [rw]
     # @!attribute length [r]
     class Packet
-
       # EAP Code
       module Code
         # EAP Code Request
@@ -50,15 +49,16 @@ module EAPNOOBServer
         # Get EAP Type by the given code
         # @param code [Byte] Code of the EAP Type
         # @return [String] Name of the EAP Type, or "UNKNOWN_EAPTYPE_<num>" if EAP Type is unknown
-        def Type::get_type_name_by_code(code)
+        def self.get_type_name_by_code(code)
           return nil if code.nil?
+
           Type.constants.each do |const|
             next if Type.const_get(const) != code
+
             return const.to_s
           end
           "UNKNOWN_EAPTYPE_#{code}"
         end
-
       end
 
       attr_accessor :code, :identifier, :type, :type_data
@@ -84,6 +84,7 @@ module EAPNOOBServer
         recalc_length!
 
         return [@code, @identifier, 0, 4] if @type.nil?
+
         [@code, @identifier, @length / 256, @length % 256, @type] + type_data
       end
 
@@ -110,7 +111,7 @@ module EAPNOOBServer
         cur_ptr = 0
         attrs = []
         while cur_ptr < bytes.length
-          attrs << {type: EAPNOOBServer::RADIUS::Packet::Attribute::EAPMESSAGE , data: bytes[cur_ptr, 253]}
+          attrs << { type: EAPNOOBServer::RADIUS::Packet::Attribute::EAPMESSAGE, data: bytes[cur_ptr, 253] }
           cur_ptr += 253
         end
         attrs
@@ -123,7 +124,10 @@ module EAPNOOBServer
         code = data[0]
         identifier = data[1]
         length = data[2] * 256 + data[3]
-        raise PacketError.new "The coded EAP length (#{length}) does not match the actual length (#{data.length})" if length != data.length
+        if length != data.length
+          raise PacketError, "The coded EAP length (#{length}) does not match the actual length (#{data.length})"
+        end
+
         type = data[4]
         type_data = data[5..-1] || []
 
@@ -135,7 +139,7 @@ module EAPNOOBServer
       # @return [EAPNOOBServer::EAP::Packet]
       def self.parse_from_radius(radius)
         attrs = radius.get_attributes_by_type(EAPNOOBServer::RADIUS::Packet::Attribute::EAPMESSAGE)
-        parse(attrs.map{|x| x[:data]}.inject([], &:+))
+        parse(attrs.map { |x| x[:data] }.inject([], &:+))
       end
     end
   end

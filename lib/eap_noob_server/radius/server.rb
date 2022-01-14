@@ -23,7 +23,12 @@ module EAPNOOBServer
         @streams = {}
         @secret = secret
         @listen_thread = Thread.new do
-          read_packet(@socket.recvfrom)
+          loop do
+            read_packet(@socket.recvfrom(256 * 256))
+          rescue StandardError => e
+            warn 'Error caught.', e
+            warn e.backtrace
+          end
         end
       end
 
@@ -37,17 +42,31 @@ module EAPNOOBServer
         src_port = sender_info[1]
         src_ip = sender_info[3]
 
-        rad_pkt = RADIUS::Packet.parse_request(msg, @secret)
+        rad_pkt = RADIUS::Packet.parse_request(msg.unpack('C*'), @secret)
 
-        key = { id: rad_pkt, src: [src_ip, src_port] }
+        state = rad_pkt.get_attributes_by_type(RADIUS::Packet::Attribute::STATE).map { |attr| attr[:data].pack('C*') }
+
+        key = state.first
 
         stream = @streams[key]
         if stream
           @streams.delete key
-          Thread.new { stream.add_request(rad_pkt) }
+          stream.add_request(rad_pkt)
         else
-          Thread.new { Authentication.new(rad_pkt, [src_ip, src_port]) }
+          Authentication.new(rad_pkt, [src_ip, src_port], self)
         end
+      end
+
+      # Send a reply to the peer
+      # @param [EAPNOOBServer::RADIUS::Packet] rad_pkt RADIUS Packet to be sent out
+      # @param [Array] dest Destination as array of ip address and port
+      # @param [Array] request_auth Value of the authenticator field in the previous request
+      # @param [String] state Value of the State attribute to match the following request
+      # @param [EAPNOOBServer::RADIUS::Authentication] radius_auth Instance of the current authentication process
+      def send_reply(rad_pkt, dest, request_auth, state, radius_auth)
+        @streams[state] = radius_auth unless state.nil?
+        rad_pkt.calculate_reply!(@secret, request_auth)
+        @socket.send rad_pkt.to_bytestring, 0, dest[0], dest[1]
       end
     end
   end

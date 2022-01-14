@@ -2,5 +2,5 @@
 
 module EAPNOOBServer
   # Version of the eap_noob_server gem
-  VERSION = '0.1.20220114T1134Z'
+  VERSION = '0.1.20220114T2238Z'
 end
