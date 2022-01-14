@@ -47,7 +47,7 @@ module EAPNOOBServer
       # @return [void]
       def reopen
         @socket.close
-        @socket=UDPSocket.new
+        @socket = UDPSocket.new
         @cur_pkt_id = 0
       end
 
@@ -58,10 +58,10 @@ module EAPNOOBServer
       # @raise [EAPNOOBServer::RADIUS::PacketError] if the Authenticator or MessageAuthenticator are invalid.
       def send_and_wait_for_reply(pkt)
         # First we set the Packet ID for this Stream.
-        pkt.pktid= @cur_pkt_id
+        pkt.pktid = @cur_pkt_id
 
         # Then we add the State Attribute, if we have cached one
-        pkt.attributes << {type:EAPNOOBServer::RADIUS::Packet::Attribute::STATE, data: @state} unless @state.nil?
+        pkt.attributes << { type: EAPNOOBServer::RADIUS::Packet::Attribute::STATE, data: @state } unless @state.nil?
 
         # Now we calculate the authenticator value and the Message Authenticator Attribute
         # We have to save the processed authenticator to validate the answer
@@ -73,7 +73,7 @@ module EAPNOOBServer
 
         text = nil
         Timeout.timeout(@timeout) do
-          text, _ = @socket.recvfrom(255*255)
+          text, = @socket.recvfrom(255 * 255)
         end
 
         # We parse the Reply

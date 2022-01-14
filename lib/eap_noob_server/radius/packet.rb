@@ -267,7 +267,7 @@ module EAPNOOBServer
       # Create a new Packet
       # @param type [Integer] Type of the Packet
       # @param pktid [Integer] Packet Identifier
-      # @param authenticator [Array<Integer>] Authenticator as Array of Bytes, may be ommitted for new packet
+      # @param authenticator [Array<Integer>] Authenticator as Array of Bytes, may be omitted for new packet
       def initialize(type, pktid, authenticator = nil)
         @type = type
         @pktid = pktid
@@ -279,16 +279,18 @@ module EAPNOOBServer
       # @param data [Array<Integer>] Payload of the RADIUS Packet
       # @return [RADIUS::Packet] A parsed RADIUS Packet
       def self.parse(data)
-        raise PacketError.new 'Packet length violates RFC2865' if data.length < 20
+        raise PacketError, 'Packet length violates RFC2865' if data.length < 20
+
         type = data[0]
         pktid = data[1]
         length = data[2] * 256 + data[3]
-        raise PacketError.new "The length coded in the packet #{length} did not not match the actual length #{data.length}" if length != data.length
+        raise PacketError, "The length coded in the packet #{length} did not not match the actual length #{data.length}" if length != data.length
+
         authenticator = data[4, 16]
         pkt = Packet.new(type, pktid, authenticator)
 
         cur_ptr = 20
-        while cur_ptr < length do
+        while cur_ptr < length
           attribute = {}
           attribute[:type] = data[cur_ptr]
           attribute[:length] = data[cur_ptr + 1]
@@ -308,8 +310,8 @@ module EAPNOOBServer
 
         msg_auth = get_attributes_by_type(Attribute::MESSAGEAUTHENTICATOR)
         auth_val = calc_message_authenticator(secret, @authenticator)
-        if msg_auth.length < 1
-          @attributes << {type: Attribute::MESSAGEAUTHENTICATOR, data: auth_val}
+        if msg_auth.empty?
+          @attributes << { type: Attribute::MESSAGEAUTHENTICATOR, data: auth_val }
         else
           msg_auth.first[:data] = auth_val
         end
@@ -329,8 +331,8 @@ module EAPNOOBServer
       def calculate_reply!(secret, request_auth)
         msg_auth = get_attributes_by_type(Attribute::MESSAGEAUTHENTICATOR)
         auth_val = calc_message_authenticator(secret, request_auth)
-        if msg_auth.length < 1
-          @attributes << {type: Attribute::MESSAGEAUTHENTICATOR, data: auth_val}
+        if msg_auth.empty?
+          @attributes << { type: Attribute::MESSAGEAUTHENTICATOR, data: auth_val }
         else
           msg_auth.first[:data] = auth_val
         end
@@ -383,10 +385,11 @@ module EAPNOOBServer
         # First we need to zero out the Message-Authenticator data or add an Attribute if it does not exist
         attr_copy = @attributes.clone.map(&:clone)
         auth_attr = attr_copy.filter { |x| x[:type] == Packet::Attribute::MESSAGEAUTHENTICATOR }
-        if auth_attr.length > 1
-          raise PacketError.new 'More then one Message-Authenticator Attribute was present'
-        elsif auth_attr.length == 0
-          attr_copy << {type: Packet::Attribute::MESSAGEAUTHENTICATOR, data: [0] * 16}
+
+        raise PacketError, 'More then one Message-Authenticator Attribute was present' if auth_attr.length > 1
+
+        if auth_attr.empty?
+          attr_copy << { type: Packet::Attribute::MESSAGEAUTHENTICATOR, data: [0] * 16 }
         else
           auth_attr.first[:data] = [0] * 16
         end
@@ -418,9 +421,9 @@ module EAPNOOBServer
           msg_auth = pkt.calc_message_authenticator(secret, pkt.authenticator)
           msg_auth_attr = pkt.get_attributes_by_type(Packet::Attribute::MESSAGEAUTHENTICATOR)
           eap_pkts = pkt.get_attributes_by_type(Packet::Attribute::EAPMESSAGE)
-          if eap_pkts.length != 0
-            raise PacketError.new 'No or multiple Message-Authenticator Attribute present' unless msg_auth_attr.length == 1
-            raise PacketError.new 'Authentication of Message Authenticator Attribute failed' unless msg_auth == msg_auth_attr.first[:data]
+          unless eap_pkts.empty?
+            raise PacketError, 'No or multiple Message-Authenticator Attribute present' unless msg_auth_attr.length == 1
+            raise PacketError, 'Authentication of Message Authenticator Attribute failed' unless msg_auth == msg_auth_attr.first[:data]
           end
         end
         pkt
@@ -439,13 +442,13 @@ module EAPNOOBServer
           msg_auth = pkt.calc_message_authenticator(secret, req_auth)
           msg_auth_attr = pkt.get_attributes_by_type(Packet::Attribute::MESSAGEAUTHENTICATOR)
           eap_pkts = pkt.get_attributes_by_type(Packet::Attribute::EAPMESSAGE)
-          if eap_pkts.length != 0
-            raise PacketError.new 'No or multiple Message-Authenticator Attribute present' unless msg_auth_attr.length == 1
-            raise PacketError.new 'Authentication of Message Authenticator Attribute failed' unless msg_auth == msg_auth_attr.first[:data]
+          unless eap_pkts.empty?
+            raise PacketError, 'No or multiple Message-Authenticator Attribute present' unless msg_auth_attr.length == 1
+            raise PacketError, 'Authentication of Message Authenticator Attribute failed' unless msg_auth == msg_auth_attr.first[:data]
           end
 
           rad_auth = pkt.calc_reply_packet_authenticator(secret, req_auth)
-          raise PacketError.new 'Authentication of RADIUS Authenticator failed' unless pkt.authenticator == rad_auth
+          raise PacketError, 'Authentication of RADIUS Authenticator failed' unless pkt.authenticator == rad_auth
         end
 
         pkt
