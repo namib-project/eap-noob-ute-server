@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module EAPNOOBServer
   module RADIUS
     # A RADIUS Authentication communication
@@ -38,7 +40,10 @@ module EAPNOOBServer
           data: state
         }]
 
-        @server.send_reply(reply_pkt, [@peer_ipaddr, @peer_port], @pkt_stream.last.authenticator, state_str, self)
+        lastpkt = @pkt_stream.last
+        raise StandardError, 'Packet not a RADIUS packet' unless lastpkt.is_a? RADIUS::Packet
+
+        @server.send_reply(reply_pkt, [@peer_ipaddr, @peer_port], lastpkt.authenticator, state_str, self)
       end
     end
   end

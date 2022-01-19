@@ -1,17 +1,15 @@
+# frozen_string_literal: true
 
 require 'socket'
 require 'timeout'
 
 module EAPNOOBServer
   module RADIUS
-
     # Class for handling one specific RADIUS stream.
     # This includes calculating the packet authenticators, message
     # authenticators, packet id.
     class Stream
-
-      attr_reader :cur_pkt_id
-      attr_reader :secret
+      attr_reader :cur_pkt_id, :secret
 
       # Initialize a new stream
       # @param [String] host RADIUS-Server IP Address
@@ -27,8 +25,6 @@ module EAPNOOBServer
         @timeout = args[:timeout] || 60
 
         @cur_pkt_id = 0
-
-        @socket
       end
 
       # Open the UDP Socket
@@ -88,11 +84,11 @@ module EAPNOOBServer
 
         # And now we also need to save the State variable, if there was any.
         state_attr = replypkt.get_attributes_by_type(EAPNOOBServer::RADIUS::Packet::Attribute::STATE)
-        if state_attr.length != 0
-          @state = state_attr.first[:data]
-        else
-          @state = nil
-        end
+        @state = if state_attr.empty?
+                   nil
+                 else
+                   state_attr.first[:data]
+                 end
 
         # And then finally we can return the reply packet.
         replypkt

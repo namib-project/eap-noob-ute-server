@@ -1,12 +1,14 @@
+# frozen_string_literal: true
 
 module EAPNOOBServer
   module EAP
+    # EAP Authentication
     class Authentication
       attr_reader :pkt_stream, :rad_auth, :identity, :eap_noob_auth, :next_identifier
 
       # Initialize a new EAP Authentication Instance
-      # @param [EAPNOOBServer::RADIUS::Padcket] first_packet Initial RADIUS Packet
-      # @param [EAPNOOBSERVER::RADIUS::Authentication]
+      # @param [EAPNOOBServer::RADIUS::Packet] first_packet Initial RADIUS Packet
+      # @param [EAPNOOBServer::RADIUS::Authentication] rad_auth Reference to the RADIUS authentication instance
       def initialize(first_packet, rad_auth)
         @rad_auth = rad_auth
         first_eap = EAP::Packet.parse_from_radius first_packet

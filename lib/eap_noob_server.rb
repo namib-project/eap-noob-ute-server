@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Require needed ruby modules
 require 'logger'
 
@@ -7,13 +9,14 @@ require_relative 'eap_noob_server/radius'
 require_relative 'eap_noob_server/eap'
 require_relative 'eap_noob_server/eapnoob'
 
+# EAP-NOOB Server including methods for RADIUS and EAP
 module EAPNOOBServer
-
   class << self
     attr_writer :logger
+
     def logger
       @logger ||= ::Logger.new($stderr).tap do |log|
-        log.progname = "EAPNOOBServer"
+        log.progname = 'EAPNOOBServer'
       end
     end
   end

@@ -1,12 +1,14 @@
+# frozen_string_literal: true
 
 module EAPNOOBServer
   module RADIUS
+    # RADIUS Server
+    # @!attribute [r] streams
+    #   @return [Array] List of known RADIUS streams
     class Server
-
-      # List of known RADIUS streams
       attr_reader :streams
 
-      # Initialize a new stream
+      # Initialize a new server
       # @param [String] secret RADIUS Secret
       # @param [Hash] args
       # @option args [Integer] :port Custom Port (defaults to 1812)
