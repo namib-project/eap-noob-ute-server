@@ -25,7 +25,9 @@ module EAPNOOBServer
       # Process a new request
       # @param [EAPNOOBServer::RADIUS::Packet] pkt New RADIUS packet to add
       def add_request(pkt)
-        # TODO
+        @pkt_stream << pkt
+        @current_pkt_id = pkt.pktid
+        @eap_authentication.add_request(pkt)
       end
 
       # Send a EAP response
@@ -42,6 +44,8 @@ module EAPNOOBServer
 
         lastpkt = @pkt_stream.last
         raise StandardError, 'Packet not a RADIUS packet' unless lastpkt.is_a? RADIUS::Packet
+
+        @pkt_stream << reply_pkt
 
         @server.send_reply(reply_pkt, [@peer_ipaddr, @peer_port], lastpkt.authenticator, state_str, self)
       end

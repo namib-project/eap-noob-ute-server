@@ -14,7 +14,7 @@ module EAPNOOBServer
         first_eap = EAP::Packet.parse_from_radius first_packet
 
         unless first_eap.code == EAP::Packet::Code::RESPONSE
-          raise EAP::PacketError, 'The first EAP Message has to be a request'
+          raise EAP::PacketError, 'The first EAP Message has to be a response'
         end
         unless first_eap.type == EAP::Packet::Type::IDENTITY
           raise EAP::PacketError, 'The first EAP Message has to be an identity'
@@ -26,6 +26,24 @@ module EAPNOOBServer
         @next_identifier = first_eap.identifier + 1
 
         @eap_noob_auth = EAPNOOB::Authentication.new(@identity, self)
+      end
+
+      # Add an EAP Request
+      # @param [EAPNOOBServer::RADIUS::Packet] pkt RADIUS Packet received
+      # @todo Here NAKs should be handled. For now it is not implemented.
+      def add_request(pkt)
+        eap = EAP::Packet.parse_from_radius pkt
+        unless eap.code == EAP::Packet::Code::RESPONSE
+          raise EAP::PacketError, 'The EAP Message has to be a response'
+        end
+        unless eap.type == EAP::Packet::Type::NOOB
+          raise EAP::PacketError, 'The EAP Message has to be of type EAP-NOOB'
+        end
+        @pkt_stream << eap
+
+        @next_identifier = eap.identifier + 1
+
+        @eap_noob_auth.add_request(eap)
       end
 
       # Send a reply to the peer.
