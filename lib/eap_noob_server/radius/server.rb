@@ -14,6 +14,7 @@ module EAPNOOBServer
       # @option args [Integer] :port Custom Port (defaults to 1812)
       # @option args [Integer] :timeout Timeout for answers (defaults to 60)
       # @option args [String] :bind IP Address to bind to (defaults to 0.0.0.0)
+      # @option args [Boolean] :status_server Activates Status-Server functionality (RFC5997) (defaults to true)
       # @todo Currently the server does not support different secrets for different clients.
       #   This should be extended in a future version, which will probably not be backwards compatible.
       def initialize(secret, **args)
@@ -21,6 +22,7 @@ module EAPNOOBServer
         bind = args[:bind] || '0.0.0.0'
         port = args[:port] || 1812
         @timeout = args[:timeout] || 60
+        @status_server = args[:status_server].nil? ? true : args[:status_server]
         @socket.bind(bind, port)
         @streams = {}
         @secret = secret
@@ -46,6 +48,14 @@ module EAPNOOBServer
 
         rad_pkt = RADIUS::Packet.parse_request(msg.unpack('C*'), @secret)
 
+        if @status_server
+          if rad_pkt.type == RADIUS::Packet::Type::STATUSSERVER
+            reply_pkt = RADIUS::Packet.new(RADIUS::Packet::Type::ACCEPT, rad_pkt.pktid)
+            send_reply(reply_pkt, [src_ip, src_port], rad_pkt.authenticator, nil, nil)
+            return
+          end
+        end
+
         state = rad_pkt.get_attributes_by_type(RADIUS::Packet::Attribute::STATE).map { |attr| attr[:data].pack('C*') }
 
         key = state.first
@@ -66,7 +76,7 @@ module EAPNOOBServer
       # @param [String] state Value of the State attribute to match the following request
       # @param [EAPNOOBServer::RADIUS::Authentication] radius_auth Instance of the current authentication process
       def send_reply(rad_pkt, dest, request_auth, state, radius_auth)
-        @streams[state] = radius_auth unless state.nil?
+        @streams[state] = radius_auth unless state.nil? || radius_auth.nil?
         rad_pkt.calculate_reply!(@secret, request_auth)
         @socket.send rad_pkt.to_bytestring, 0, dest[0], dest[1]
       end

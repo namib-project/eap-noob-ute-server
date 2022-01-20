@@ -27,6 +27,8 @@ module EAPNOOBServer
         REJECT    =  3
         # RADIUS Challenge. Sent by the RADIUS-Server in ongoing communication
         CHALLENGE = 11
+        # RADIUS Status-Server. Sent by the NAS to check lifeness of the server
+        STATUSSERVER = 12
       end
 
       # Constants for RADIUS Attributes
