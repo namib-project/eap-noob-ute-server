@@ -49,6 +49,34 @@ module EAPNOOBServer
 
         @server.send_reply(reply_pkt, [@peer_ipaddr, @peer_port], lastpkt.authenticator, state_str, self)
       end
+
+      # Send an accept message
+      # @param [Array] eap_attributes EAP Attributes as array
+      def send_accept(eap_attributes)
+        reply_pkt = RADIUS::Packet.new(RADIUS::Packet::Type::ACCEPT, @current_pkt_id)
+        reply_pkt.add_attributes eap_attributes
+
+        lastpkt = @pkt_stream.last
+        raise StandardError, 'Packet not a RADIUS packet' unless lastpkt.is_a? RADIUS::Packet
+
+        @pkt_stream << reply_pkt
+
+        @server.send_reply(reply_pkt, [@peer_ipaddr, @peer_port], lastpkt.authenticator, nil, self)
+      end
+
+      # Send a reject message
+      # @param [Array] eap_attributes EAP Attributes as array
+      def send_reject(eap_attributes)
+        reply_pkt = RADIUS::Packet.new(RADIUS::Packet::Type::REJECT, @current_pkt_id)
+        reply_pkt.add_attributes eap_attributes
+
+        lastpkt = @pkt_stream.last
+        raise StandardError, 'Packet not a RADIUS packet' unless lastpkt.is_a? RADIUS::Packet
+
+        @pkt_stream << reply_pkt
+
+        @server.send_reply(reply_pkt, [@peer_ipaddr, @peer_port], lastpkt.authenticator, nil, self)
+      end
     end
   end
 end

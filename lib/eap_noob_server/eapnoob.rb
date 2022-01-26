@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative 'eapnoob/crypto'
+require_relative 'eapnoob/ephemeral_state'
 require_relative 'eapnoob/authentication'
 
 module EAPNOOBServer
