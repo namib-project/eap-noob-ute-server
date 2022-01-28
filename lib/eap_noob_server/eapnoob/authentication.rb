@@ -97,6 +97,14 @@ module EAPNOOBServer
           # Indication to the peer that the server has not yet received an OOB message
           send_error(:unexpected_message_type) unless @cur_status == :waiting_sent
           handle_waiting(parsed)
+        when 5
+          # NoobId discovery
+          send_error(:unexpected_message_type) unless @cur_status == :noobid_discovery_sent
+          handle_noobid_discovery(parsed)
+        when 6
+          # Authentication and key confirmation with HMAC
+          send_error(:unexpected_message_type) unless @cur_status == :hmac_sent
+          handle_authentication_hmac(parsed)
         else
           # Unknown or yet unsupported type
           nil
@@ -125,18 +133,29 @@ module EAPNOOBServer
             send_error(:state_mismatch) # Incompatible status
           end
         when 1
+          # Waiting for OOB
           case @peer_state
           when 0
             execute_param_negotiation
           when 1
             execute_waiting
           when 2
-            # Completion exchange
+            execute_noobid_discovery
           else
             send_error(:state_mismatch) # Incompatible status
           end
         when 2
           # OOB Received
+          case @peer_state
+          when 0
+            execute_param_negotiation
+          when 1
+            execute_authentication_hmac
+          when 2
+            execute_noobid_discovery
+          else
+            send_error(:state_mismatch) # Incompatible status
+          end
         when 3, 4
           # Reconnecting/Registered
         else
@@ -253,30 +272,45 @@ module EAPNOOBServer
         oob.noob = SecureRandom.random_bytes(32)
         noob_encoded = Base64.urlsafe_encode64(oob.noob, padding: false)
         oob.noob_id = @crypto.calculate_hash(['NoobId', noob_encoded].to_json)[0, 16]
-        oob.hoob = @crypto.calculate_hash([
-          2, # Dir
-          @noob_attrs['Vers'],
-          @noob_attrs['Verp'],
-          @peer_id, # PeerId
-          @noob_attrs['Cryptosuites'],
-          @noob_attrs['Dirs'],
-          @noob_attrs['ServerInfo'],
-          @noob_attrs['Cryptosuitep'],
-          @noob_attrs['Dirp'],
-          @noob_attrs['NAI'],
-          @noob_attrs['PeerInfo'],
-          0, # Keying mode
-          @noob_attrs['PKs'],
-          @noob_attrs['Ns'],
-          @noob_attrs['PKp'],
-          @noob_attrs['Np'],
-          noob_encoded
-        ].to_json)[0, 16]
+        oob.hoob = calc_hoob(@crypto, @noob_attrs, 2, @peer_id, 0, noob_encoded)
 
         oob.save
 
         oob_msg = { peer_id: oob.peer_id, noob_id: oob.noob_id, noob: oob.noob, hoob: oob.hoob }
         puts oob_msg.inspect
+      end
+
+      # Calculate the Hoob
+      # @param [Class] crypto Cryptography class used for calculating the hash
+      # @param [Hash] attrs List of attributes for the current connection
+      # @param [Integer] dir Direction of OOB-Message.
+      #   1 for peer-to-server, 2 for server-to-peer.
+      # @param [String] peer_id PeerId
+      # @param [Integer] keying_mode Keying mode. Always 0 for HOOB-Calculation
+      # @param [String] noob_encoded Base64URL-encoded NOOB
+      # @todo For compatibility this uses the fixed value 'eap-noob.net' as NAI.
+      def self.calc_hoob(crypto, attrs, dir, peer_id, keying_mode, noob_encoded) 
+        input = [
+          dir, # Dir
+          attrs['Vers'],
+          attrs['Verp'],
+          peer_id, # PeerId
+          attrs['Cryptosuites'],
+          attrs['Dirs'],
+          attrs['ServerInfo'],
+          attrs['Cryptosuitep'],
+          attrs['Dirp'],
+          'eap-noob.net', # attrs['NAI'],
+          attrs['PeerInfo'],
+          keying_mode, # Keying mode
+          attrs['PKs'],
+          attrs['Ns'],
+          attrs['PKp'],
+          attrs['Np'],
+          noob_encoded # NOOB (Base64url encoded)
+        ].to_json
+        EAPNOOBServer.logger.info "Input to HOOB Calculation: #{input}"
+        crypto.calculate_hash(input)[0, 16]
       end
 
       def execute_waiting
@@ -294,6 +328,31 @@ module EAPNOOBServer
 
       def handle_waiting(parsed)
         @eap_auth.send_failure
+      end
+
+      def execute_noobid_discovery
+        return_val = {
+          'Type': 5,
+          'PeerId': @peer_id
+        }
+        @cur_status = :noobid_discovery_sent
+        reply_pkt = EAP::Packet.new(EAP::Packet::Code::REQUEST,
+                                    @eap_auth.next_identifier,
+                                    EAP::Packet::Type::NOOB,
+                                    return_val.to_json.unpack('C*'))
+        @eap_auth.send_reply(reply_pkt)
+      end
+
+      def handle_noobid_discovery(parsed)
+        # TODO Not yet implemented
+      end
+
+      def execute_authentication_hmac
+        # TODO Not yet implemented
+      end
+
+      def handle_authentication_hmac(parsed)
+        # TODO Not yet implemented
       end
 
       # Get the ephemeral or persistent state
@@ -322,6 +381,10 @@ module EAPNOOBServer
       # Generate a new random PeerId
       def generate_new_peer_id
         ((('a'..'z').to_a + ('0'..'9').to_a + %w[- .]) * 16).sample(16).join ''
+      end
+
+      def key_generation
+        # See src/eap_common/eap_noob_common.c L. 633
       end
     end
   end

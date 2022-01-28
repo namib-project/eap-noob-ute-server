@@ -35,7 +35,7 @@ module EAPNOOBServer
         # Calculate the hash of the given input using the corresponding hash function as defined by the cryptosuite
         # @param [String] input JSON string for the input
         # @return [String] Hash output as byte string
-        def calculate_hash(input)
+        def self.calculate_hash(input)
           OpenSSL::Digest::SHA256.digest(input)
         end
 
@@ -43,7 +43,7 @@ module EAPNOOBServer
         # @param [String] key symmetric key as byte string
         # @param [String] input JSON string for the HMAC input
         # @return [String] HMAC output as byte string
-        def calculate_hmac(key, input)
+        def self.calculate_hmac(key, input)
           OpenSSL::HMAC.digest(OpenSSL::Digest::SHA256.new, key, input)
         end
       end
