@@ -381,6 +381,43 @@ module EAPNOOBServer
         @attributes.select { |x| x[:type] == code }
       end
 
+      # Add a vendor-specific MS-MPPE key with the correct encryption
+      # @param [Integer] vendor_type 16 for Send, 17 for Recv-Key
+      # @param [Array<Integer>] req_auth Request Authenticator
+      # @param [String] secret RADIUS secret
+      # @param [String] key Cryptographic key
+      def add_cryptographic_key(vendor_type, req_auth, secret, key)
+        newattr = { type: EAPNOOBServer::RADIUS::Packet::Attribute::VENDORSPECIFIC}
+
+        # Vendor-ID Microsoft
+        newattr[:data] = [0x00, 0x00, 0x01, 0x37]
+        newattr[:data] += [vendor_type]
+
+        salt = SecureRandom.random_bytes(2).unpack('C*')
+        salt[0] = salt[0] | 0x80
+
+        plaintext = [key.length] # Encode length of key
+        plaintext += key.unpack('C*') # Add the key itself
+        plaintext += [0] * ((16 - plaintext.length % 16) % 16) # Add padding to match 16 Byte-Blocks
+
+        ciphertext = []
+        intermediate = OpenSSL::Digest::MD5.digest(secret + req_auth.pack('C*') + salt.pack('C*')).unpack('C*')
+        (0..15).each do |i|
+          ciphertext[i] = plaintext[i] ^ intermediate[i]
+        end
+        index = 16
+        while index < plaintext.length
+          intermediate = OpenSSL::Digest::MD5.digest(secret + ciphertext[index - 16, 16].pack('C*')).unpack('C*')
+          (0..15).each do |i|
+            ciphertext[index + i] = plaintext[index + i] ^ intermediate[i]
+          end
+          index += 16
+        end
+        newattr[:data] += [ciphertext.length + 2]
+        newattr[:data] += ciphertext
+        @attributes << newattr
+      end
+
       # Calculate value of the message authenticator
       # @param secret [String] RADIUS Secret
       # @param req_auth [Array<Integer>] Request Authenticator

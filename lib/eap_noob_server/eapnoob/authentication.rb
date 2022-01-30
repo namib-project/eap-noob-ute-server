@@ -37,6 +37,14 @@ module EAPNOOBServer
         2 => EAPNOOBServer::EAPNOOB::Crypto::NIST_P256
       }.freeze
 
+      module StateMachine
+        UNREGISTERED = 0
+        WAITING_FOR_OOB = 1
+        OOB_RECEIVED = 2
+        RECONNECTING = 3
+        REGISTERED = 4
+      end
+
       # Initialize a new EAP-NOOB authentication process
       # @param [String] identity NAI transmitted by the peer in the EAP-Identity message.
       # @param [EAPNOOBServer::EAP::Authentication] eap_auth reference
@@ -111,6 +119,60 @@ module EAPNOOBServer
         end
       end
 
+      # Calculate the Hoob
+      # @param [Class] crypto Cryptography class used for calculating the hash
+      # @param [Hash] attrs List of attributes for the current connection
+      # @param [Integer] dir Direction of OOB-Message.
+      #   1 for peer-to-server, 2 for server-to-peer.
+      # @param [String] peer_id PeerId
+      # @param [Integer] keying_mode Keying mode. Always 0 for HOOB-Calculation
+      # @param [String] noob_encoded Base64URL-encoded NOOB
+      # @todo For compatibility this uses the fixed value 'eap-noob.net' as NAI.
+      def self.calc_hoob(crypto, attrs, dir, peer_id, keying_mode, noob_encoded)
+        input = [
+          dir, # Dir
+          attrs['Vers'],
+          attrs['Verp'],
+          peer_id, # PeerId
+          attrs['Cryptosuites'],
+          attrs['Dirs'],
+          attrs['ServerInfo'],
+          attrs['Cryptosuitep'],
+          attrs['Dirp'],
+          'eap-noob.net', # attrs['NAI'],
+          attrs['PeerInfo'],
+          keying_mode, # Keying mode
+          attrs['PKs'],
+          attrs['Ns'],
+          attrs['PKp'],
+          attrs['Np'],
+          noob_encoded # NOOB (Base64url encoded)
+        ].to_json
+        crypto.calculate_hash(input)[0, 16]
+      end
+
+      def self.generate_hash_input(attrs, dir, peer_id, keying_mode, noob_encoded, rekeying)
+        [
+          dir,
+          attrs['Vers'],
+          attrs['Verp'],
+          peer_id,
+          attrs['Cryptosuites'],
+          attrs['Dirs'] || '',
+          attrs['ServerInfo'] || '',
+          attrs['Cryptosuitep'],
+          attrs['Dirp'] || '',
+          'eap-noob.net', # attrs['NAI'],
+          attrs['PeerInfo'] || '',
+          keying_mode,
+          (rekeying ? attrs['PKs2'] || '' : attrs['PKs']),
+          (rekeying ? attrs['Ns2'] : attrs['Ns']),
+          (rekeying ? attrs['PKp2'] || '' : attrs['PKp']),
+          (rekeying ? attrs['Np2'] : attrs['Np']),
+          noob_encoded || ''
+        ].to_json
+      end
+
       private
 
       # Handle PeerId and PeerState discovery packages
@@ -122,17 +184,16 @@ module EAPNOOBServer
 
         get_ephemeral_or_persistent_state
 
-        EAPNOOBServer.logger.info("Server State: #{@server_state}")
 
         case @server_state
-        when 0
+        when StateMachine::UNREGISTERED
           # Unregistered
           if @peer_state.between?(0, 2)
             execute_param_negotiation
           else
-            send_error(:state_mismatch) # Incompatible status
+            send_error(:state_mismatch) and return # Incompatible status
           end
-        when 1
+        when StateMachine::WAITING_FOR_OOB
           # Waiting for OOB
           case @peer_state
           when 0
@@ -142,9 +203,9 @@ module EAPNOOBServer
           when 2
             execute_noobid_discovery
           else
-            send_error(:state_mismatch) # Incompatible status
+            send_error(:state_mismatch) and return # Incompatible status
           end
-        when 2
+        when StateMachine::OOB_RECEIVED
           # OOB Received
           case @peer_state
           when 0
@@ -154,7 +215,7 @@ module EAPNOOBServer
           when 2
             execute_noobid_discovery
           else
-            send_error(:state_mismatch) # Incompatible status
+            send_error(:state_mismatch) and return # Incompatible status
           end
         when 3, 4
           # Reconnecting/Registered
@@ -193,13 +254,13 @@ module EAPNOOBServer
       # Handle Version, cryptosuite, and parameter negotiation packages
       # @param [Hash] parsed Content of the received JSON
       def handle_param_negotiation(parsed)
-        send_error(:invalid_message_structure) unless parsed['Verp']
-        send_error(:invalid_message_structure) unless parsed['Cryptosuitep']
-        send_error(:invalid_message_structure) unless parsed['Dirp']
-        send_error(:invalid_message_structure) unless parsed['PeerInfo']
+        send_error(:invalid_message_structure) and return unless parsed['Verp']
+        send_error(:invalid_message_structure) and return unless parsed['Cryptosuitep']
+        send_error(:invalid_message_structure) and return unless parsed['Dirp']
+        send_error(:invalid_message_structure) and return unless parsed['PeerInfo']
 
-        send_error(:no_mutually_supported_version) if parsed['Verp'] != 1
-        send_error(:no_mutually_supported_cryptosuite) if parsed['Cryptosuitep'] != 1
+        send_error(:no_mutually_supported_version) and return if parsed['Verp'] != 1
+        send_error(:no_mutually_supported_cryptosuite) and return if parsed['Cryptosuitep'] != 1
 
         @noob_attrs['Verp'] = parsed['Verp']
         @noob_attrs['Cryptosuitep'] = parsed['Cryptosuitep']
@@ -238,17 +299,17 @@ module EAPNOOBServer
       # Handle ECDHE Key exchange
       # @param [Hash] parsed Content of the received JSON
       def handle_ecdhe_exchange(parsed)
-        send_error(:invalid_message_structure) unless parsed['PKp']
-        send_error(:invalid_message_structure) unless parsed['Np']
+        send_error(:invalid_message_structure) and return unless parsed['PKp']
+        send_error(:invalid_message_structure) and return unless parsed['Np']
 
         @noob_attrs['PKp'] = parsed['PKp']
         @noob_attrs['Np'] = parsed['Np']
 
         key_det = parsed['PKp']
-        send_error(:invalid_message_structure) unless key_det.is_a? Hash
-        # send_error(:invalid_ecdhe_key) unless key_det['kty'] == 'OKP'
-        send_error(:invalid_ecdhe_key) unless key_det['crv'] == 'X25519'
-        send_error(:invalid_ecdhe_key) unless key_det['x']
+        send_error(:invalid_message_structure) and return unless key_det.is_a? Hash
+        # send_error(:invalid_ecdhe_key) and return unless key_det['kty'] == 'OKP'
+        send_error(:invalid_ecdhe_key) and return unless key_det['crv'] == 'X25519'
+        send_error(:invalid_ecdhe_key) and return unless key_det['x']
 
         key_x = Base64.urlsafe_decode64(key_det['x'])
 
@@ -277,40 +338,6 @@ module EAPNOOBServer
         oob.save
 
         oob_msg = { peer_id: oob.peer_id, noob_id: oob.noob_id, noob: oob.noob, hoob: oob.hoob }
-        puts oob_msg.inspect
-      end
-
-      # Calculate the Hoob
-      # @param [Class] crypto Cryptography class used for calculating the hash
-      # @param [Hash] attrs List of attributes for the current connection
-      # @param [Integer] dir Direction of OOB-Message.
-      #   1 for peer-to-server, 2 for server-to-peer.
-      # @param [String] peer_id PeerId
-      # @param [Integer] keying_mode Keying mode. Always 0 for HOOB-Calculation
-      # @param [String] noob_encoded Base64URL-encoded NOOB
-      # @todo For compatibility this uses the fixed value 'eap-noob.net' as NAI.
-      def self.calc_hoob(crypto, attrs, dir, peer_id, keying_mode, noob_encoded) 
-        input = [
-          dir, # Dir
-          attrs['Vers'],
-          attrs['Verp'],
-          peer_id, # PeerId
-          attrs['Cryptosuites'],
-          attrs['Dirs'],
-          attrs['ServerInfo'],
-          attrs['Cryptosuitep'],
-          attrs['Dirp'],
-          'eap-noob.net', # attrs['NAI'],
-          attrs['PeerInfo'],
-          keying_mode, # Keying mode
-          attrs['PKs'],
-          attrs['Ns'],
-          attrs['PKp'],
-          attrs['Np'],
-          noob_encoded # NOOB (Base64url encoded)
-        ].to_json
-        EAPNOOBServer.logger.info "Input to HOOB Calculation: #{input}"
-        crypto.calculate_hash(input)[0, 16]
       end
 
       def execute_waiting
@@ -344,15 +371,63 @@ module EAPNOOBServer
       end
 
       def handle_noobid_discovery(parsed)
-        # TODO Not yet implemented
+        send_error(:invalid_message_structure) and return unless parsed['NoobId']
+
+        @noob = EphemeralNoob.find_by(noob_id: parsed['NoobId'])
+
+        send_error(:unrecognized_oob_msg_identifier) and return unless @noob
+
+        execute_authentication_hmac
       end
 
       def execute_authentication_hmac
-        # TODO Not yet implemented
+        @noob = EphemeralNoob.where(peer_id: @peer_id).last if @server_state == StateMachine::OOB_RECEIVED && !@noob
+
+        send_error(:application_specific_error) and return unless @noob
+
+        calculate_keys
+
+        return_val = {
+          'Type': 6,
+          'PeerId': @peer_id,
+          'NoobId': @noob.noob_id
+        }
+        mac_s = Crypto::Curve25519.calculate_hmac(@keys['Kms'],
+                                                  Authentication.generate_hash_input(@noob_attrs,
+                                                                                     2,
+                                                                                     @peer_id,
+                                                                                     0,
+                                                                                     @noob.noob,
+                                                                                     false))
+
+        return_val['MACs'] = Base64.urlsafe_encode64(mac_s, padding: false)
+
+        @cur_status = :hmac_sent
+
+        reply_pkt = EAP::Packet.new(EAP::Packet::Code::REQUEST,
+                                    @eap_auth.next_identifier,
+                                    EAP::Packet::Type::NOOB,
+                                    return_val.to_json.unpack('C*'))
+        @eap_auth.send_reply(reply_pkt)
       end
 
       def handle_authentication_hmac(parsed)
-        # TODO Not yet implemented
+        send_error(:invalid_message_structure) and return unless parsed['MACp']
+
+        mac_p = Crypto::Curve25519.calculate_hmac(@keys['Kmp'],
+                                                  Authentication.generate_hash_input(@noob_attrs,
+                                                                                     1,
+                                                                                     @peer_id,
+                                                                                     0,
+                                                                                     @noob.noob,
+                                                                                     false))
+
+        mac_p_enc = Base64.urlsafe_encode64(mac_p, padding: false)
+        send_error(:hmac_verification_failure) unless mac_p_enc == parsed['MACp']
+
+        save_persistent_state
+
+        send_success
       end
 
       # Get the ephemeral or persistent state
@@ -378,13 +453,53 @@ module EAPNOOBServer
         state.save
       end
 
+      def save_persistent_state
+        # TODO Not yet implemented
+      end
+
       # Generate a new random PeerId
       def generate_new_peer_id
         ((('a'..'z').to_a + ('0'..'9').to_a + %w[- .]) * 16).sample(16).join ''
       end
 
-      def key_generation
-        # See src/eap_common/eap_noob_common.c L. 633
+      # Derive the keys from the given inputs
+      # @param [String] z Secret as byte string
+      # @param [String] party_u_info PartyUInfo (Peer Nonce) as byte string
+      # @param [String] party_v_info PartyVInfo (Server Nonce) as byte string
+      # @param [String] supp_priv_info SuppPrivInfo (Noob/Kz) as byte string
+      # @param [Integer] out_len Required number of output bytes
+      # @return [String] `out_len` bytes of output
+      def key_generation(z, party_u_info, party_v_info, supp_priv_info, out_len)
+        kdf_input = "#{z}EAP-NOOB#{party_u_info}#{party_v_info}#{supp_priv_info || ''}"
+        output = ''
+        ctr = 1
+        puts kdf_input.unpack1('H*')
+        while output.length < out_len
+          output += Crypto::Curve25519.calculate_hash([ctr].pack('N') + kdf_input)
+          ctr += 1
+        end
+        output[0, out_len]
+      end
+
+      def calculate_keys
+        complete_key = key_generation(@shared_secret,
+                                      Base64.urlsafe_decode64(@noob_attrs['Np']),
+                                      Base64.urlsafe_decode64(@noob_attrs['Ns']),
+                                      Base64.urlsafe_decode64(@noob.noob),
+                                      320)
+        puts complete_key.unpack1('H*')
+        @keys = {}
+        @keys['MSK'] = complete_key[0..63]
+        @keys['EMSK'] = complete_key[64..127]
+        @keys['AMSK'] = complete_key[128..191]
+        @keys['MethodId'] = complete_key[192..223]
+        @keys['Kms'] = complete_key[224..255]
+        @keys['Kmp'] = complete_key[256..287]
+        @keys['Kz'] = complete_key[288..319]
+      end
+
+      def send_success
+        @eap_auth.send_success(@keys['MSK'][0..31], @keys['MSK'][32..63])
       end
     end
   end

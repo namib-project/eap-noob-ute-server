@@ -61,6 +61,16 @@ module EAPNOOBServer
         )
         @rad_auth.send_reject(reply_pkt.to_radius_attributes)
       end
+
+      def send_success(recv_key, send_key)
+        reply_pkt = EAP::Packet.new(
+          EAP::Packet::Code::SUCCESS,
+          @next_identifier,
+          nil,
+          []
+        )
+        @rad_auth.send_accept(reply_pkt.to_radius_attributes, recv_key, send_key)
+      end
     end
   end
 end

@@ -52,7 +52,9 @@ module EAPNOOBServer
 
       # Send an accept message
       # @param [Array] eap_attributes EAP Attributes as array
-      def send_accept(eap_attributes)
+      # @param [Array] recv_key MPPE-Recv-Key as array of bytes
+      # @param [Array] send_key MPPE-Send-Key as array of bytes
+      def send_accept(eap_attributes, recv_key, send_key)
         reply_pkt = RADIUS::Packet.new(RADIUS::Packet::Type::ACCEPT, @current_pkt_id)
         reply_pkt.add_attributes eap_attributes
 
@@ -61,7 +63,7 @@ module EAPNOOBServer
 
         @pkt_stream << reply_pkt
 
-        @server.send_reply(reply_pkt, [@peer_ipaddr, @peer_port], lastpkt.authenticator, nil, self)
+        @server.send_accept(reply_pkt, [@peer_ipaddr, @peer_port], lastpkt.authenticator, recv_key, send_key)
       end
 
       # Send a reject message
@@ -77,6 +79,7 @@ module EAPNOOBServer
 
         @server.send_reply(reply_pkt, [@peer_ipaddr, @peer_port], lastpkt.authenticator, nil, self)
       end
+
     end
   end
 end

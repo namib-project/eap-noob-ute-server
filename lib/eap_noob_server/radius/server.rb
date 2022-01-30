@@ -80,6 +80,19 @@ module EAPNOOBServer
         rad_pkt.calculate_reply!(@secret, request_auth)
         @socket.send rad_pkt.to_bytestring, 0, dest[0], dest[1]
       end
+
+      # Send an accept to the peer
+      # @param [EAPNOOBServer::RADIUS::Packet] rad_pkt RADIUS Packet to be sent out
+      # @param [Array] dest Destination as array of ip address and port
+      # @param [Array] request_auth Value of the authenticator field in the previous request
+      # @param [Array] recv_key MPPE-Recv-Key as array of bytes
+      # @param [Array] send_key MPPE-Send-Key as array of bytes
+      def send_accept(rad_pkt, dest, request_auth, recv_key, send_key)
+        rad_pkt.add_cryptographic_key(16, request_auth, @secret, send_key)
+        rad_pkt.add_cryptographic_key(17, request_auth, @secret, recv_key)
+        rad_pkt.calculate_reply!(@secret, request_auth)
+        @socket.send rad_pkt.to_bytestring, 0, dest[0], dest[1]
+      end
     end
   end
 end
