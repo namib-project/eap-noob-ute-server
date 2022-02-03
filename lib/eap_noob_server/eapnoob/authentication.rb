@@ -298,6 +298,7 @@ module EAPNOOBServer
 
       # Handle ECDHE Key exchange
       # @param [Hash] parsed Content of the received JSON
+      # @todo This is currently fixed on X25519
       def handle_ecdhe_exchange(parsed)
         send_error(:invalid_message_structure) and return unless parsed['PKp']
         send_error(:invalid_message_structure) and return unless parsed['Np']
@@ -380,6 +381,8 @@ module EAPNOOBServer
         execute_authentication_hmac
       end
 
+      # Execute the Authentication and HMAC exchange
+      # @todo This is currently fixed on Curve25519
       def execute_authentication_hmac
         @noob = EphemeralNoob.where(peer_id: @peer_id).last if @server_state == StateMachine::OOB_RECEIVED && !@noob
 
@@ -411,6 +414,8 @@ module EAPNOOBServer
         @eap_auth.send_reply(reply_pkt)
       end
 
+      # Handle received Authentication and HMAC exchange
+      # @todo This is currently fixed on Curve25519
       def handle_authentication_hmac(parsed)
         send_error(:invalid_message_structure) and return unless parsed['MACp']
 
@@ -433,6 +438,16 @@ module EAPNOOBServer
       # Get the ephemeral or persistent state
       # @todo not yet implemented completely
       def get_ephemeral_or_persistent_state
+
+        @persistent = PersistentState.find_by(peer_id: @peer_id)
+        unless @persistent.nil?
+          @shared_secret = @persistent.kz
+          @noob_attrs = {}
+          @noob_attrs['Verp_old'] = @persistent.vers
+          @noob_attrs['Cryptosuitep_old'] = @persistent.cryptosuite
+          return
+        end
+
         # TODO: Not yet implemented
         @eph = EphemeralState.find_by(peer_id: @peer_id)
         unless @eph.nil?
@@ -454,7 +469,15 @@ module EAPNOOBServer
       end
 
       def save_persistent_state
-        # TODO Not yet implemented
+        EphemeralState.delete_by(peer_id: @peer_id)
+        EphemeralNoob.delete_by(peer_id: @peer_id)
+        persistent = @persistent || PersistentState.new
+        persistent.kz = @keys['Kz']
+        persistent.peer_id = @peer_id
+        persistent.nai = @noob_attrs['NAI']
+        persistent.cryptosuite = @noob_attrs['Cryptosuitep']
+        persistent.vers = @noob_attrs['Verp']
+        persistent.save
       end
 
       # Generate a new random PeerId
