@@ -52,19 +52,18 @@ module EAPNOOBServer
         @cur_status = :new
         @server_state = 0
         @eap_auth = eap_auth
-        reply_pkt = EAP::Packet.new(EAP::Packet::Code::REQUEST,
-                                    @eap_auth.next_identifier,
-                                    EAP::Packet::Type::NOOB,
-                                    { 'Type': 1 }.to_json.unpack('C*'))
-        @eap_auth.send_reply(reply_pkt)
+
+        return_val = { 'Type': 1 }
+
+        send_reply return_val
         @noob_attrs = { 'NAI': identity }
       end
 
       # Send out an EAP Error
       # @todo not yet implemented
-      # @param [Symbol] error_code Error code to send
-      # @param [String] msg Message to attach to the error
-      def send_error(error_code, msg = nil)
+      # @param [Symbol] _error_code Error code to send
+      # @param [String] _msg Message to attach to the error
+      def send_error(_error_code, _msg = nil)
         raise NotImplementedError, 'This is not yet implemented'
       end
 
@@ -113,6 +112,18 @@ module EAPNOOBServer
           # Authentication and key confirmation with HMAC
           send_error(:unexpected_message_type) unless @cur_status == :hmac_sent
           handle_authentication_hmac(parsed)
+        when 7
+          # Version, cryptosuite, and parameter negotiation
+          send_error(:unexpected_message_type) unless @cur_status == :reconnect_negotiation_sent
+          handle_reconnect_version_negotiation(parsed)
+        when 8
+          # Exchange of ECDHE keys and nonces
+          send_error(:unexpected_message_type) unless @cur_status == :reconnect_parameter_sent
+          handle_reconnect_echde_exchange(parsed)
+        when 9
+          # Authentication and key confirmation with HMAC
+          send_error(:unexpected_message_type) unless @cur_status == :reconnect_hmac_sent
+          handle_reconnect_hmac_exchange(parsed)
         else
           # Unknown or yet unsupported type
           nil
@@ -128,7 +139,7 @@ module EAPNOOBServer
       # @param [Integer] keying_mode Keying mode. Always 0 for HOOB-Calculation
       # @param [String] noob_encoded Base64URL-encoded NOOB
       # @todo For compatibility this uses the fixed value 'eap-noob.net' as NAI.
-      def self.calc_hoob(crypto, attrs, dir, peer_id, keying_mode, noob_encoded)
+      def self.calc_hoob(crypto, attrs, dir, peer_id, keying_mode, noob_encoded, nai='eap-noob.net')
         input = [
           dir, # Dir
           attrs['Vers'],
@@ -139,7 +150,7 @@ module EAPNOOBServer
           attrs['ServerInfo'],
           attrs['Cryptosuitep'],
           attrs['Dirp'],
-          'eap-noob.net', # attrs['NAI'],
+          nai || '', # attrs['NAI'],
           attrs['PeerInfo'],
           keying_mode, # Keying mode
           attrs['PKs'],
@@ -151,7 +162,7 @@ module EAPNOOBServer
         crypto.calculate_hash(input)[0, 16]
       end
 
-      def self.generate_hash_input(attrs, dir, peer_id, keying_mode, noob_encoded, rekeying)
+      def self.generate_hash_input(attrs, dir, peer_id, keying_mode, noob_encoded, rekeying,  nai='eap-noob.net')
         [
           dir,
           attrs['Vers'],
@@ -162,7 +173,7 @@ module EAPNOOBServer
           attrs['ServerInfo'] || '',
           attrs['Cryptosuitep'],
           attrs['Dirp'] || '',
-          'eap-noob.net', # attrs['NAI'],
+          nai || '', # attrs['NAI'],
           attrs['PeerInfo'] || '',
           keying_mode,
           (rekeying ? attrs['PKs2'] || '' : attrs['PKs']),
@@ -188,7 +199,10 @@ module EAPNOOBServer
         case @server_state
         when StateMachine::UNREGISTERED
           # Unregistered
-          if @peer_state.between?(0, 2)
+          case @peer_state
+          when StateMachine::UNREGISTERED,
+            StateMachine::WAITING_FOR_OOB,
+            StateMachine::OOB_RECEIVED
             execute_param_negotiation
           else
             send_error(:state_mismatch) and return # Incompatible status
@@ -196,11 +210,11 @@ module EAPNOOBServer
         when StateMachine::WAITING_FOR_OOB
           # Waiting for OOB
           case @peer_state
-          when 0
+          when StateMachine::UNREGISTERED
             execute_param_negotiation
-          when 1
+          when StateMachine::WAITING_FOR_OOB
             execute_waiting
-          when 2
+          when StateMachine::OOB_RECEIVED
             execute_noobid_discovery
           else
             send_error(:state_mismatch) and return # Incompatible status
@@ -208,17 +222,25 @@ module EAPNOOBServer
         when StateMachine::OOB_RECEIVED
           # OOB Received
           case @peer_state
-          when 0
+          when StateMachine::UNREGISTERED
             execute_param_negotiation
-          when 1
+          when StateMachine::WAITING_FOR_OOB
             execute_authentication_hmac
-          when 2
+          when StateMachine::OOB_RECEIVED
             execute_noobid_discovery
           else
             send_error(:state_mismatch) and return # Incompatible status
           end
-        when 3, 4
+        when StateMachine::REGISTERED,
+          StateMachine::RECONNECTING
           # Reconnecting/Registered
+          case @peer_state
+          when StateMachine::REGISTERED,
+            StateMachine::RECONNECTING
+            execute_reconnect_version_negotiation
+          else
+            send_error(:state_mismatch) and return # Incompatible status
+          end
         else
           # Invalid state
           raise StandardError, 'Invalid server state'
@@ -244,15 +266,13 @@ module EAPNOOBServer
         @noob_attrs['ServerInfo'] = server_info
 
         @cur_status = :discovery_sent
-        reply_pkt = EAP::Packet.new(EAP::Packet::Code::REQUEST,
-                                    @eap_auth.next_identifier,
-                                    EAP::Packet::Type::NOOB,
-                                    return_val.to_json.unpack('C*'))
-        @eap_auth.send_reply(reply_pkt)
+
+        send_reply return_val
       end
 
       # Handle Version, cryptosuite, and parameter negotiation packages
       # @param [Hash] parsed Content of the received JSON
+      # @todo This is currently fixed on X25519
       def handle_param_negotiation(parsed)
         send_error(:invalid_message_structure) and return unless parsed['Verp']
         send_error(:invalid_message_structure) and return unless parsed['Cryptosuitep']
@@ -289,11 +309,8 @@ module EAPNOOBServer
         return_val['Ns'] = n_s_b
 
         @cur_status = :parameters_sent
-        reply_pkt = EAP::Packet.new(EAP::Packet::Code::REQUEST,
-                                    @eap_auth.next_identifier,
-                                    EAP::Packet::Type::NOOB,
-                                    return_val.to_json.unpack('C*'))
-        @eap_auth.send_reply(reply_pkt)
+
+        send_reply return_val
       end
 
       # Handle ECDHE Key exchange
@@ -341,36 +358,36 @@ module EAPNOOBServer
         oob_msg = { peer_id: oob.peer_id, noob_id: oob.noob_id, noob: oob.noob, hoob: oob.hoob }
       end
 
+      # Execute the Waiting exchange
       def execute_waiting
         return_val = {
           'Type': 4,
           'PeerId': @peer_id
         }
         @cur_status = :waiting_sent
-        reply_pkt = EAP::Packet.new(EAP::Packet::Code::REQUEST,
-                                    @eap_auth.next_identifier,
-                                    EAP::Packet::Type::NOOB,
-                                    return_val.to_json.unpack('C*'))
-        @eap_auth.send_reply(reply_pkt)
+
+        send_reply return_val
       end
 
-      def handle_waiting(parsed)
+      # Handle the waiting exchange
+      # @param [Hash] _parsed Content of the received JSON
+      def handle_waiting(_parsed)
         @eap_auth.send_failure
       end
 
+      # Execute NoobId discovery
       def execute_noobid_discovery
         return_val = {
           'Type': 5,
           'PeerId': @peer_id
         }
         @cur_status = :noobid_discovery_sent
-        reply_pkt = EAP::Packet.new(EAP::Packet::Code::REQUEST,
-                                    @eap_auth.next_identifier,
-                                    EAP::Packet::Type::NOOB,
-                                    return_val.to_json.unpack('C*'))
-        @eap_auth.send_reply(reply_pkt)
+
+        send_reply return_val
       end
 
+      # Handle NoobId discovery
+      # @param [Hash] parsed Content of the received JSON
       def handle_noobid_discovery(parsed)
         send_error(:invalid_message_structure) and return unless parsed['NoobId']
 
@@ -388,6 +405,8 @@ module EAPNOOBServer
 
         send_error(:application_specific_error) and return unless @noob
 
+        @noob_attrs['KeyingMode'] = 0
+
         calculate_keys
 
         return_val = {
@@ -395,68 +414,206 @@ module EAPNOOBServer
           'PeerId': @peer_id,
           'NoobId': @noob.noob_id
         }
-        mac_s = Crypto::Curve25519.calculate_hmac(@keys['Kms'],
-                                                  Authentication.generate_hash_input(@noob_attrs,
-                                                                                     2,
-                                                                                     @peer_id,
-                                                                                     0,
-                                                                                     @noob.noob,
-                                                                                     false))
+        mac_s = Crypto::Curve25519.calculate_hmac(
+          @keys['Kms'],
+          Authentication.generate_hash_input(
+            @noob_attrs,
+            2,
+            @peer_id,
+            0,
+            @noob.noob,
+            false
+          )
+        )
 
         return_val['MACs'] = Base64.urlsafe_encode64(mac_s, padding: false)
 
         @cur_status = :hmac_sent
 
-        reply_pkt = EAP::Packet.new(EAP::Packet::Code::REQUEST,
-                                    @eap_auth.next_identifier,
-                                    EAP::Packet::Type::NOOB,
-                                    return_val.to_json.unpack('C*'))
-        @eap_auth.send_reply(reply_pkt)
+        send_reply return_val
       end
 
       # Handle received Authentication and HMAC exchange
+      # @param [Hash] parsed Content of the received JSON
       # @todo This is currently fixed on Curve25519
       def handle_authentication_hmac(parsed)
         send_error(:invalid_message_structure) and return unless parsed['MACp']
 
-        mac_p = Crypto::Curve25519.calculate_hmac(@keys['Kmp'],
-                                                  Authentication.generate_hash_input(@noob_attrs,
-                                                                                     1,
-                                                                                     @peer_id,
-                                                                                     0,
-                                                                                     @noob.noob,
-                                                                                     false))
+        mac_p = Crypto::Curve25519.calculate_hmac(
+          @keys['Kmp'],
+          Authentication.generate_hash_input(
+            @noob_attrs,
+            1,
+            @peer_id,
+            0,
+            @noob.noob,
+            false
+          )
+        )
 
         mac_p_enc = Base64.urlsafe_encode64(mac_p, padding: false)
-        send_error(:hmac_verification_failure) unless mac_p_enc == parsed['MACp']
+        send_error(:hmac_verification_failure) and return unless mac_p_enc == parsed['MACp']
 
         save_persistent_state
 
         send_success
       end
 
+      def execute_reconnect_version_negotiation
+        return_val = {
+          'Type': 7,
+          'PeerId': @peer_id,
+          'Vers': [1],
+          'Cryptosuites': [1]
+        }
+
+        @noob_attrs['Vers'] = [1]
+        @noob_attrs['Cryptosuites'] = [1]
+        @noob_attrs['ServerInfo'] = nil
+
+        @cur_status = :reconnect_negotiation_sent
+
+        send_reply return_val
+      end
+
+      def handle_reconnect_version_negotiation(parsed)
+        send_error(:invalid_message_structure) and return unless parsed['Verp']
+        send_error(:invalid_message_structure) and return unless parsed['Cryptosuitep']
+
+        @noob_attrs['Verp']         = parsed['Verp']
+        @noob_attrs['Cryptosuitep'] = parsed['Cryptosuitep']
+        # @noob_attrs['PeerInfo']     = parsed['PeerInfo'] TODO: THIS IS NOT THE RFC!!!!
+
+        send_error(:no_mutually_supported_version) and return if parsed['Verp'] != 1
+        send_error(:no_mutually_supported_cryptosuite) and return if parsed['Cryptosuitep'] != 1
+
+        # Select the keying mode
+        if @noob_attrs['Verp'] == @noob_attrs['Verp_old'] &&
+           @noob_attrs['Cryptosuitep'] == @noob_attrs['Cryptosuitep_old']
+          # Don't do ecdhe again, just calculate new key
+          @noob_attrs['KeyingMode'] = 1
+        else
+          @noob_attrs['KeyingMode'] = 3
+          @crypto = Crypto::Curve25519.new
+        end
+
+        execute_reconnect_ecdhe_exchange
+      end
+
+      def execute_reconnect_ecdhe_exchange
+        return_val = {
+          'Type': 8,
+          'PeerId': @peer_id,
+          'KeyingMode': @noob_attrs['KeyingMode']
+        }
+        if @noob_attrs['KeyingMode'] != 1
+          pk_s = @crypto.pks
+          @noob_attrs['PKs2'] = pk_s
+          return_val['PKs2'] = pk_s
+        end
+        n_s = SecureRandom.random_bytes(32)
+        n_s_b = Base64.urlsafe_encode64(n_s, padding: false)
+        @noob_attrs['Ns2'] = n_s_b
+        return_val['Ns2'] = n_s_b
+
+        @cur_status = :reconnect_parameter_sent
+
+        send_reply return_val
+      end
+
+      def handle_reconnect_echde_exchange(parsed)
+        send_error(:invalid_message_structure) and return unless parsed['Np2']
+
+        if @noob_attrs['KeyingMode'] != 1
+          send_error(:invalid_message_structure) and return unless parsed['PKp2']
+
+          @noob_attrs['PKp2'] = parsed['PKp2']
+          key_det = parsed['PKp2']
+          send_error(:invalid_message_structure) and return unless key_det.is_a? Hash
+          send_error(:invalid_ecdhe_key) and return unless key_det['crv'] == 'X25519'
+          send_error(:invalid_ecdhe_key) and return unless key_det['x']
+
+          key_x = Base64.urlsafe_decode64(key_det['x'])
+
+          @crypto.add_peer_key(key_x)
+
+          @shared_secret = @crypto.calculate_shared_secret
+        end
+
+        @noob_attrs['Np2'] = parsed['Np2']
+
+        execute_reconnect_hmac_exchange
+      end
+
+      def execute_reconnect_hmac_exchange
+
+        calculate_keys(reconnect: true)
+
+        return_val = {
+          'Type': 9,
+          'PeerId': @peer_id
+        }
+        mac_s = Crypto::Curve25519.calculate_hmac(
+          @keys['Kms'],
+          Authentication.generate_hash_input(
+            @noob_attrs,
+            2,
+            @peer_id,
+            @noob_attrs['KeyingMode'],
+            nil,
+            true
+          )
+        )
+        return_val['MACs2'] = Base64.urlsafe_encode64(mac_s, padding: false)
+
+        @cur_status = :reconnect_hmac_sent
+
+        send_reply return_val
+      end
+
+      def handle_reconnect_hmac_exchange(parsed)
+        send_error(:invalid_message_structure) and return unless parsed['MACp2']
+
+        mac_p = Crypto::Curve25519.calculate_hmac(
+          @keys['Kmp'],
+          Authentication.generate_hash_input(
+            @noob_attrs,
+            1,
+            @peer_id,
+            @noob_attrs['KeyingMode'],
+            nil,
+            true
+          )
+        )
+        mac_p_enc = Base64.urlsafe_encode64(mac_p, padding: false)
+        send_error(:hmac_verification_failure) and return unless mac_p_enc == parsed['MACp2']
+
+        save_persistent_state
+
+        send_success
+      end
       # Get the ephemeral or persistent state
-      # @todo not yet implemented completely
       def get_ephemeral_or_persistent_state
 
         @persistent = PersistentState.find_by(peer_id: @peer_id)
         unless @persistent.nil?
           @shared_secret = @persistent.kz
-          @noob_attrs = {}
+          @noob_attrs['Kz'] = @persistent.kz
           @noob_attrs['Verp_old'] = @persistent.vers
           @noob_attrs['Cryptosuitep_old'] = @persistent.cryptosuite
+          @server_state = StateMachine::REGISTERED
           return
         end
 
-        # TODO: Not yet implemented
         @eph = EphemeralState.find_by(peer_id: @peer_id)
-        unless @eph.nil?
-          @noob_attrs = JSON.parse(@eph.noob_attrs)
-          @server_state = @noob_attrs['server_state']
-          @shared_secret = @eph.shared_secret
-        end
+        return if @eph.nil?
 
-        # TODO: Persistent Storage
+        # Found an ephemeral state
+        @noob_attrs = JSON.parse(@eph.noob_attrs)
+        @server_state = @noob_attrs['server_state']
+        @shared_secret = @eph.shared_secret
+
+        nil
       end
 
       # Save the ephemeral state after the initial handshake
@@ -468,7 +625,9 @@ module EAPNOOBServer
         state.save
       end
 
+      # Save the persistent state after the completion/reconnect handshake
       def save_persistent_state
+        # First delete all Ephemeral state associated with the peer_id
         EphemeralState.delete_by(peer_id: @peer_id)
         EphemeralNoob.delete_by(peer_id: @peer_id)
         persistent = @persistent || PersistentState.new
@@ -481,6 +640,7 @@ module EAPNOOBServer
       end
 
       # Generate a new random PeerId
+      # @return [String] newly allocated PeerId
       def generate_new_peer_id
         ((('a'..'z').to_a + ('0'..'9').to_a + %w[- .]) * 16).sample(16).join ''
       end
@@ -492,10 +652,12 @@ module EAPNOOBServer
       # @param [String] supp_priv_info SuppPrivInfo (Noob/Kz) as byte string
       # @param [Integer] out_len Required number of output bytes
       # @return [String] `out_len` bytes of output
+      # @todo This is currently fixed on Curve25519
       def key_generation(z, party_u_info, party_v_info, supp_priv_info, out_len)
         kdf_input = "#{z}EAP-NOOB#{party_u_info}#{party_v_info}#{supp_priv_info || ''}"
         output = ''
         ctr = 1
+        puts 'KDF Input:'
         puts kdf_input.unpack1('H*')
         while output.length < out_len
           output += Crypto::Curve25519.calculate_hash([ctr].pack('N') + kdf_input)
@@ -504,12 +666,31 @@ module EAPNOOBServer
         output[0, out_len]
       end
 
-      def calculate_keys
-        complete_key = key_generation(@shared_secret,
-                                      Base64.urlsafe_decode64(@noob_attrs['Np']),
-                                      Base64.urlsafe_decode64(@noob_attrs['Ns']),
-                                      Base64.urlsafe_decode64(@noob.noob),
-                                      320)
+      # Calculate the cryptographic keys
+      def calculate_keys(reconnect: false)
+        complete_key = key_generation(
+          @shared_secret,
+          Base64.urlsafe_decode64(reconnect ? @noob_attrs['Np2'] : @noob_attrs['Np']),
+          Base64.urlsafe_decode64(reconnect ? @noob_attrs['Ns2'] : @noob_attrs['Ns']),
+          case @noob_attrs['KeyingMode']
+          when 0
+            Base64.urlsafe_decode64(@noob.noob)
+          when 1
+            nil
+            # @noob_attrs['Kz'] # TODO: THIS IS NOT THE RFC, but this is the way it is implemented in the peer.
+          when 2, 3
+            @noob_attrs['Kz']
+          end,
+          case @noob_attrs['KeyingMode']
+          when 0
+            320
+          when 1, 2
+            288
+          when 3
+            320
+          end
+        )
+        puts 'Complete Key:'
         puts complete_key.unpack1('H*')
         @keys = {}
         @keys['MSK'] = complete_key[0..63]
@@ -518,7 +699,22 @@ module EAPNOOBServer
         @keys['MethodId'] = complete_key[192..223]
         @keys['Kms'] = complete_key[224..255]
         @keys['Kmp'] = complete_key[256..287]
-        @keys['Kz'] = complete_key[288..319]
+        @keys['Kz'] = case @noob_attrs['KeyingMode']
+                      when 0, 3
+                        complete_key[288..319]
+                      else
+                        @shared_secret
+                      end
+      end
+
+      # Send Reply
+      # @param [Hash] reply Content of the Reply packet as hash
+      def send_reply(reply)
+        reply_pkt = EAP::Packet.new(EAP::Packet::Code::REQUEST,
+                                    @eap_auth.next_identifier,
+                                    EAP::Packet::Type::NOOB,
+                                    reply.to_json.unpack('C*'))
+        @eap_auth.send_reply(reply_pkt)
       end
 
       def send_success

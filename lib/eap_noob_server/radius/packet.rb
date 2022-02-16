@@ -15,7 +15,8 @@ module EAPNOOBServer
     # @!attribute [rw] authenticator
     #   @return [Array<Integer>] Authenticator of the RADIUS packet
     # @!attribute [r] attributes
-    #   @return [Array<Hash>] Array of Attributes. `{type: <type>, length: <length>, data: <array of bytes>}` length can be nil
+    #   @return [Array<Hash>] Array of Attributes. `{type: <type>, length: <length>, data: <array of bytes>}`
+    #     length can be nil
     class Packet
       # Constants for RADIUS Type
       module Type
@@ -288,7 +289,9 @@ module EAPNOOBServer
         type = data[0]
         pktid = data[1]
         length = data[2] * 256 + data[3]
-        raise PacketError, "The length coded in the packet #{length} did not not match the actual length #{data.length}" if length != data.length
+        if length != data.length
+          raise PacketError, "The length coded in the packet #{length} did not not match the actual length #{data.length}"
+        end
 
         authenticator = data[4, 16]
         pkt = Packet.new(type, pktid, authenticator)
@@ -387,7 +390,8 @@ module EAPNOOBServer
       # @param [String] secret RADIUS secret
       # @param [String] key Cryptographic key
       def add_cryptographic_key(vendor_type, req_auth, secret, key)
-        newattr = { type: EAPNOOBServer::RADIUS::Packet::Attribute::VENDORSPECIFIC}
+        puts key.unpack1('H*')
+        newattr = { type: EAPNOOBServer::RADIUS::Packet::Attribute::VENDORSPECIFIC }
 
         # Vendor-ID Microsoft
         newattr[:data] = [0x00, 0x00, 0x01, 0x37]
@@ -401,7 +405,11 @@ module EAPNOOBServer
         plaintext += [0] * ((16 - plaintext.length % 16) % 16) # Add padding to match 16 Byte-Blocks
 
         ciphertext = []
-        intermediate = OpenSSL::Digest::MD5.digest(secret + req_auth.pack('C*') + salt.pack('C*')).unpack('C*')
+
+        md5input = secret + req_auth.pack('C*') + salt.pack('C*')
+
+        intermediate = OpenSSL::Digest::MD5.digest(md5input).unpack('C*')
+        puts "Intermediate #{intermediate.pack('C*').unpack1('H*')}"
         (0..15).each do |i|
           ciphertext[i] = plaintext[i] ^ intermediate[i]
         end
@@ -439,7 +447,7 @@ module EAPNOOBServer
         # Then we can calculate the packet bytes
         pkt_bytes = Packet.pkt_data_to_bytes(@type, @pktid, req_auth, attr_copy)
 
-        result = OpenSSL::HMAC.digest(OpenSSL::Digest::MD5.new, secret, pkt_bytes.pack('C*'))
+        result = OpenSSL::HMAC.digest(OpenSSL::Digest.new('MD5'), secret, pkt_bytes.pack('C*'))
 
         result.unpack('C*')
       end
@@ -465,7 +473,9 @@ module EAPNOOBServer
           eap_pkts = pkt.get_attributes_by_type(Packet::Attribute::EAPMESSAGE)
           unless eap_pkts.empty?
             raise PacketError, 'No or multiple Message-Authenticator Attribute present' unless msg_auth_attr.length == 1
-            raise PacketError, 'Authentication of Message Authenticator Attribute failed' unless msg_auth == msg_auth_attr.first[:data]
+            unless msg_auth == msg_auth_attr.first[:data]
+              raise PacketError, 'Authentication of Message Authenticator Attribute failed'
+            end
           end
         end
         pkt
@@ -486,7 +496,9 @@ module EAPNOOBServer
           eap_pkts = pkt.get_attributes_by_type(Packet::Attribute::EAPMESSAGE)
           unless eap_pkts.empty?
             raise PacketError, 'No or multiple Message-Authenticator Attribute present' unless msg_auth_attr.length == 1
-            raise PacketError, 'Authentication of Message Authenticator Attribute failed' unless msg_auth == msg_auth_attr.first[:data]
+            unless msg_auth == msg_auth_attr.first[:data]
+              raise PacketError, 'Authentication of Message Authenticator Attribute failed'
+            end
           end
 
           rad_auth = pkt.calc_reply_packet_authenticator(secret, req_auth)

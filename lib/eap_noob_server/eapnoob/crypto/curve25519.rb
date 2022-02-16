@@ -44,7 +44,11 @@ module EAPNOOBServer
         # @param [String] input JSON string for the HMAC input
         # @return [String] HMAC output as byte string
         def self.calculate_hmac(key, input)
-          OpenSSL::HMAC.digest(OpenSSL::Digest::SHA256.new, key, input)
+          puts "HMAC Input: #{input.unpack1('H*')}"
+          puts "HMAC Key: #{key.unpack1('H*')}"
+          output = OpenSSL::HMAC.digest(OpenSSL::Digest::SHA256.new, key, input)
+          puts "HMAC Output: #{output.unpack1('H*')}"
+          output
         end
       end
     end
