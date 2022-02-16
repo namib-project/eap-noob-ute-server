@@ -413,7 +413,8 @@ module EAPNOOBServer
           end
           index += 16
         end
-        newattr[:data] += [ciphertext.length + 2]
+        newattr[:data] += [ciphertext.length + 4]
+        newattr[:data] += salt
         newattr[:data] += ciphertext
         @attributes << newattr
       end
