@@ -56,7 +56,7 @@ module EAPNOOBServer
         return_val = { 'Type': 1 }
 
         send_reply return_val
-        @noob_attrs = { 'NAI': identity }
+        @noob_attrs = { 'NAI' => identity }
       end
 
       # Send out an EAP Error
@@ -87,7 +87,9 @@ module EAPNOOBServer
         case parsed['Type']
         when 0
           # Error message
-          # TODO: Handle error.
+          # TODO: Handle error
+          warn "Received Error code #{parsed['ErrorCode']}"
+          @eap_auth.send_failure
         when 1
           # PeerId and PeerState discovery
           send_error(:unexpected_message_type) unless @cur_status == :new
@@ -150,7 +152,8 @@ module EAPNOOBServer
           attrs['ServerInfo'],
           attrs['Cryptosuitep'],
           attrs['Dirp'],
-          nai || '', # attrs['NAI'],
+          # nai || '',
+          attrs['NAI'],
           attrs['PeerInfo'],
           keying_mode, # Keying mode
           attrs['PKs'],
@@ -159,7 +162,11 @@ module EAPNOOBServer
           attrs['Np'],
           noob_encoded # NOOB (Base64url encoded)
         ].to_json
-        crypto.calculate_hash(input)[0, 16]
+        warn "NOOB Attributes: #{attrs}"
+        warn "HOOB Input: #{input}"
+        base = crypto
+        base = crypto.class unless crypto.is_a? Class
+        base.calculate_hash(input)[0, 16]
       end
 
       def self.generate_hash_input(attrs, dir, peer_id, keying_mode, noob_encoded, rekeying,  nai='eap-noob.net')
@@ -173,7 +180,8 @@ module EAPNOOBServer
           attrs['ServerInfo'] || '',
           attrs['Cryptosuitep'],
           attrs['Dirp'] || '',
-          nai || '', # attrs['NAI'],
+          # nai || '',
+          attrs['NAI'],
           attrs['PeerInfo'] || '',
           keying_mode,
           (rekeying ? attrs['PKs2'] || '' : attrs['PKs']),
@@ -334,6 +342,7 @@ module EAPNOOBServer
         @crypto.add_peer_key(key_x)
         @shared_secret = @crypto.calculate_shared_secret
 
+
         @eap_auth.send_failure
 
         @server_state = 1 # Waiting for OOB
@@ -350,8 +359,8 @@ module EAPNOOBServer
         oob.peer_id = @peer_id
         oob.noob = SecureRandom.random_bytes(32)
         noob_encoded = Base64.urlsafe_encode64(oob.noob, padding: false)
-        oob.noob_id = @crypto.calculate_hash(['NoobId', noob_encoded].to_json)[0, 16]
-        oob.hoob = calc_hoob(@crypto, @noob_attrs, 2, @peer_id, 0, noob_encoded)
+        oob.noob_id = @crypto.class.calculate_hash(['NoobId', noob_encoded].to_json)[0, 16]
+        oob.hoob = self.class.calc_hoob(@crypto, @noob_attrs, 2, @peer_id, 0, noob_encoded)
 
         oob.save
 
@@ -414,6 +423,7 @@ module EAPNOOBServer
           'PeerId': @peer_id,
           'NoobId': @noob.noob_id
         }
+        warn 'Calc MACs'
         mac_s = Crypto::Curve25519.calculate_hmac(
           @keys['Kms'],
           Authentication.generate_hash_input(
@@ -439,6 +449,7 @@ module EAPNOOBServer
       def handle_authentication_hmac(parsed)
         send_error(:invalid_message_structure) and return unless parsed['MACp']
 
+        warn 'Calc MACp'
         mac_p = Crypto::Curve25519.calculate_hmac(
           @keys['Kmp'],
           Authentication.generate_hash_input(

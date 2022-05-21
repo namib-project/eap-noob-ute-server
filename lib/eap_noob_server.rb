@@ -8,6 +8,7 @@ require 'openssl'
 require 'x25519'
 require 'base64'
 require 'active_record'
+require 'cbor'
 
 # Require all library files
 require_relative 'eap_noob_server/version'

@@ -36,6 +36,11 @@ module EAPNOOBServer
         unless eap.code == EAP::Packet::Code::RESPONSE
           raise EAP::PacketError, 'The EAP Message has to be a response'
         end
+        if eap.type == EAP::Packet::Type::NAK
+          # NAK, client wanted a different EAP-Method. We don't support different methods.
+          warn 'Received NAK. Rejecting.'
+          send_failure
+        end
         unless eap.type == EAP::Packet::Type::NOOB
           raise EAP::PacketError, 'The EAP Message has to be of type EAP-NOOB'
         end

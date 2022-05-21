@@ -21,6 +21,7 @@ Gem::Specification.new do |spec|
   spec.licenses       = %w[MIT Apache-2.0]
 
   spec.add_runtime_dependency 'activerecord'
+  spec.add_runtime_dependency 'cbor', '~>0.5.9.6'
   spec.add_runtime_dependency 'rbnacl', '~>7.1.1'
   spec.add_runtime_dependency 'x25519', '~>1.0.9'
   spec.required_ruby_version = '>=2.7.0'

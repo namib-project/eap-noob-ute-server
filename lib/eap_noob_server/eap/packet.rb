@@ -46,6 +46,10 @@ module EAPNOOBServer
         PWD          = 52
         # EAP Type NOOB
         NOOB         = 56
+        # EAP Type UTE
+        # @todo This is currently the EAP code for experimental EAP-Methods
+        #   This should be updated once IANA issues a number for EAP-UTE
+        UTE          =255
 
         # Get EAP Type by the given code
         # @param code [Byte] Code of the EAP Type
