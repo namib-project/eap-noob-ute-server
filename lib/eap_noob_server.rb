@@ -8,13 +8,14 @@ require 'openssl'
 require 'x25519'
 require 'base64'
 require 'active_record'
-require 'cbor'
+require 'cbor-diagnostic'
 
 # Require all library files
 require_relative 'eap_noob_server/version'
 require_relative 'eap_noob_server/radius'
 require_relative 'eap_noob_server/eap'
 require_relative 'eap_noob_server/eapnoob'
+require_relative 'eap_noob_server/eapute'
 
 # EAP-NOOB Server including methods for RADIUS and EAP
 module EAPNOOBServer

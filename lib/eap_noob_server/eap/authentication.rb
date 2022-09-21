@@ -25,7 +25,13 @@ module EAPNOOBServer
 
         @next_identifier = first_eap.identifier + 1
 
-        @eap_noob_auth = EAPNOOB::Authentication.new(@identity, self)
+        if @identity.match /@eap-noob.arpa$/
+          @eap_noob_auth = EAPNOOB::Authentication.new(@identity, self)
+        elsif @identity.match /@eap-ute.arpa$/
+          @eap_noob_auth = EAPUTE::Authentication.new(@identity, self)
+        else
+          send_failure
+        end
       end
 
       # Add an EAP Request
@@ -39,10 +45,17 @@ module EAPNOOBServer
         if eap.type == EAP::Packet::Type::NAK
           # NAK, client wanted a different EAP-Method. We don't support different methods.
           warn 'Received NAK. Rejecting.'
-          send_failure
+          send_failure and return
         end
-        unless eap.type == EAP::Packet::Type::NOOB
+        if @eap_noob_auth.is_a?(EAPNOOB::Authentication) && eap.type != EAP::Packet::Type::NOOB
           raise EAP::PacketError, 'The EAP Message has to be of type EAP-NOOB'
+        end
+        if @eap_noob_auth.is_a?(EAPUTE::Authentication) && eap.type != EAP::Packet::Type::UTE
+          raise EAP::PacketError, 'The EAP Message has to be of type EAP-UTE'
+        end
+
+        if !@eap_noob_auth.is_a?(EAPNOOB::Authentication) && !@eap_noob_auth.is_a?(EAPUTE::Authentication)
+          raise EAP::PacketError, 'The EAP exchange is neither EAP-NOOB or EAP-UTE. This is invalid'
         end
         @pkt_stream << eap
 

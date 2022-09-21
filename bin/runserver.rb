@@ -11,6 +11,9 @@ ActiveRecord::Base.establish_connection(
 
 @s = EAPNOOBServer::RADIUS::Server.new('secret')
 
+def ute(auth, nonce, peerid)
+  EAPNOOBServer::EAPUTE::OutOfBand.receive_oob([peerid].pack('H*'), [nonce].pack('H*'), [auth].pack('H*'))
+end
 def oob(msg)
   oobmsg = JSON.parse(Base64.decode64(msg))
   EAPNOOBServer::EAPNOOB::EphemeralNoob.receive_noob(oobmsg)
