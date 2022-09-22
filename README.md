@@ -1,8 +1,8 @@
-# EAP NOOB Server
+# EAP-NOOB and EAP-UTE Server
 
-This is a proof of concept implementation of an EAP-NOOB server written in ruby.
+This is a proof of concept implementation of an EAP-NOOB and EAP-UTE server written in ruby.
 
-This server supports no other EAP method than EAP-NOOB.
+This server supports no other EAP method than EAP-NOOB and EAP-UTE.
 
 ## License
 
